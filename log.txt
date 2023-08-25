@@ -1,0 +1,25 @@
+2023-08-16T09:42:49.9562150Z TRACE:: Config.Get(): Configuration key not found. Key: version-id - Using default value: 
+2023-08-16T09:42:49.9573120Z TRACE:: Config.Get(): Configuration key not found. Key: cache-location - Using default value: 
+2023-08-16T09:42:49.9574530Z TRACE:: Engine.Main(): LEAN ALGORITHMIC TRADING ENGINE v2.5.0.0 Mode: DEBUG (64bit) Host: Pablos-MBP
+2023-08-16T09:42:49.9851730Z TRACE:: Engine.Main(): Started 11:42
+2023-08-16T09:42:49.9866490Z TRACE:: Config.Get(): Configuration key not found. Key: algorithm-language - Using default value: 
+2023-08-16T09:45:12.8618390Z TRACE:: Config.Get(): Configuration key not found. Key: version-id - Using default value: 
+2023-08-16T09:45:12.8628670Z TRACE:: Config.Get(): Configuration key not found. Key: cache-location - Using default value: 
+2023-08-16T09:45:12.8630710Z TRACE:: Engine.Main(): LEAN ALGORITHMIC TRADING ENGINE v2.5.0.0 Mode: DEBUG (64bit) Host: Pablos-MBP
+2023-08-16T09:45:12.8860730Z TRACE:: Engine.Main(): Started 11:45
+2023-08-16T09:45:12.8869160Z TRACE:: Config.Get(): Configuration key not found. Key: algorithm-language - Using default value: 
+2023-08-16T09:55:03.2567330Z TRACE:: Config.Get(): Configuration key not found. Key: version-id - Using default value: 
+2023-08-16T09:55:03.2581170Z TRACE:: Config.Get(): Configuration key not found. Key: cache-location - Using default value: 
+2023-08-16T09:55:03.2585210Z TRACE:: Engine.Main(): LEAN ALGORITHMIC TRADING ENGINE v2.5.0.0 Mode: DEBUG (64bit) Host: Pablos-MBP
+2023-08-16T09:55:03.3298890Z TRACE:: Engine.Main(): Started 11:55
+2023-08-16T09:55:03.3309860Z TRACE:: Config.Get(): Configuration key not found. Key: algorithm-language - Using default value: 
+2023-08-16T09:58:51.6188330Z TRACE:: Config.Get(): Configuration key not found. Key: version-id - Using default value: 
+2023-08-16T09:58:51.6198350Z TRACE:: Config.Get(): Configuration key not found. Key: cache-location - Using default value: 
+2023-08-16T09:58:51.6199840Z TRACE:: Engine.Main(): LEAN ALGORITHMIC TRADING ENGINE v2.5.0.0 Mode: DEBUG (64bit) Host: Pablos-MBP
+2023-08-16T09:58:51.6430360Z TRACE:: Engine.Main(): Started 11:58
+2023-08-16T09:58:51.6443230Z TRACE:: Config.Get(): Configuration key not found. Key: algorithm-language - Using default value: 
+2023-08-16T10:07:06.0029240Z TRACE:: Config.Get(): Configuration key not found. Key: version-id - Using default value: 
+2023-08-16T10:07:06.0038960Z TRACE:: Config.Get(): Configuration key not found. Key: cache-location - Using default value: 
+2023-08-16T10:07:06.0040640Z TRACE:: Engine.Main(): LEAN ALGORITHMIC TRADING ENGINE v2.5.0.0 Mode: DEBUG (64bit) Host: Pablos-MBP
+2023-08-16T10:07:06.0307630Z TRACE:: Engine.Main(): Started 12:07
+2023-08-16T10:07:06.0316690Z TRACE:: Config.Get(): Configuration key not found. Key: algorithm-language - Using default value: 
