@@ -25,24 +25,23 @@ def dataPreparation(params):
     # else:
     #     timeframe = 'm1'
 
-    df = data_preparation.csv(f'/Users/pablopedrosa/PycharmProjects/QS_algorithm/downloads/'
+    df = data_preparation.csv(f'./downloads/'
                               f'{params["asset_name"][0].replace("/", "")}_data.csv', 'm1')
     df = primary_model.primary_features(df, params)
     df = data_preparation.secondary_features(df, params)
-    to_backtest = df
+    df, events = data_preparation.add_barriers(df)
+    to_backtest = df.join(events.drop(columns=['side']), how='inner').dropna()
+    df, events = data_preparation.cusum(df, events)
 
-    t_events = data_preparation.cusum(df)
-    df, events = data_preparation.add_barriers(df, t_events)
     events = data_preparation.weights(events, df)
     bins = data_preparation.get_bins(events, df['close'])
     clean_bins = data_preparation.drop_labels(bins, minPtc=.05)
-    df.reset_index(inplace=True)
+    df.reset_index(inplace=True, drop=True)
     # df = data_preparation.calculate_fracdiff(df)
     df.dropna(inplace=True)
     df.index = df['timestamp']
     to_model = df.join(clean_bins, how='inner')
     to_model.dropna(inplace=True)
-
     return to_model, to_backtest
 
 
@@ -50,7 +49,11 @@ def main(params):
     results = {}
     if params['action'] == 'create' or params['action'] == 'update':
         to_model, to_backtest = dataPreparation(params)
-        best_model = model_training.testFunc(to_model[:int(len(to_model)*0.3)], params)
+        # pd.set_option('display.max_columns', None)
+        # print(to_model.bin.value_counts())
+
+        best_model = model_training.testFunc(to_model[:int(len(to_model)*0.8)], params)
+
         # model_dir = "models"
         # model_filename = f'{params["userID"]}model_{params["features"]}.pkl'
         # model_filepath = os.path.join(model_dir, model_filename)
@@ -58,8 +61,10 @@ def main(params):
         # with open(model_filepath, 'wb') as model_file:
         #     pickle.dump(best_model, model_file)
 
+        # best_model = ''
+
         results = walkforward.main(best_model, to_model, to_backtest, params)
-        # print(results)
+        print(results)
 
         # sys.stdout.write(json.dumps(results) + '\n')
         # sys.stdout.flush()
@@ -89,7 +94,6 @@ if __name__ == '__main__':
     #           'technical_feature': ['Trendlines', 'Pivot Points'],
     #           'long_entry_signal': {'selectedLongEntrySignals': ['Composition of government spending']},
     #           'short_entry_signal': {'selectedShortEntrySignals': ['Tax policy impacts']}, 'action': 'create'}
-    #
     # params['ml_model'] = 'random_forest'
     # params['risk_tolerance'] = 'High'
 
@@ -101,9 +105,11 @@ if __name__ == '__main__':
         'asset_selection': 'forex',
         'asset_name': ['EURUSD'],
         'trading_frequency': 'minutes', 'position_holding': 'short_term', 'risk_tolerance': 'low',
+
         'fundamental_feature': 'nope',
         'sentiment_feature': ['news_headlines', 'retail_sentiment'],
-        'technical_feature': ['higher_highs_lows'],
+        'technical_feature': ['moving_average'],
+
         'features': [],
         'entry_long_signal': ['price_above_sma', 'retracement', 'small_break_structure'],
 
@@ -113,21 +119,14 @@ if __name__ == '__main__':
         'initial_investment': 100000,
            'ml_model': 'random_forest',
 
-        'action': 'paper'}
+        'action': 'create'}
     main(params)
 
 
 '''NEXT STEPS'''
 
-'''strategy creation flow'''
-
-'''show backtesting in dash'''
-
-'''deploy user model to paper trading'''
-
-'''add features, alphavantage quandl'''
-
 '''add weights, purgedkfold, dynamic bet_sizing, multiprocessing'''
+
 
 
 

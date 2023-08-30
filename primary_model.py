@@ -4,6 +4,11 @@ import matplotlib.pyplot as plt
 from scipy.signal import argrelextrema
 from sklearn.neighbors import KernelDensity
 from scipy.signal import find_peaks, savgol_filter
+from ta import add_all_ta_features
+from ta.utils import dropna
+from pandas_ta.utils import get_offset, verify_series
+import mplfinance as mpf
+import matplotlib.dates as mdates
 
 
 def draw_line_chart(df, support_resistance=None):
@@ -101,16 +106,16 @@ def primary_features(df, params, live=False):
             params['features'] += ['signalSupRes']
 
         if 'higher_highs_lows' in params['technical_feature']:
-            window_size = int(len(df) * 0.02)
+
+            window_size = int(len(df) * 0.1)
             if window_size % 2 == 0:
                 window_size += 1
             distance = int(window_size / 2)
 
             df['close_smooth'] = savgol_filter(df.close, window_size, 5)
-            peaks_idx, _ = find_peaks(df.close_smooth.values, distance=distance, width=3)
-            troughs_idx, _ = find_peaks(-1 * df.close_smooth.values, distance=50, width=3)
+            peaks_idx, _ = find_peaks(df.close_smooth.values, distance=distance, width=30)
+            troughs_idx, _ = find_peaks(-1 * df.close_smooth.values, distance=distance, width=30)
 
-            # Initialize signals
             df['signalZigZag'] = 0
             current_signal = 0
             df = df.copy()
@@ -138,6 +143,33 @@ def primary_features(df, params, live=False):
                 df.loc[i, 'signalZigZag'] = current_signal
             params['features'] += ['signalZigZag']
 
+            df['signalRetrace'] = 0
+            for i in range(1, len(df)):
+                if i in peaks_idx:
+                    # Take the most recent trough before this peak
+                    recent_troughs = troughs_idx[troughs_idx < i]
+                    if len(recent_troughs) == 0:
+                        continue
+                    last_trough_idx = recent_troughs[-1]
+                    last_trough_value = df['close_smooth'].iloc[last_trough_idx]
+                    peak_value = df['close_smooth'].iloc[i]
+                    retracement_level = peak_value - 0.2 * (peak_value - last_trough_value)
+
+                    if df['close_smooth'].iloc[last_trough_idx:i].between(last_trough_value, retracement_level).any():
+                        df.loc[i:, 'signalRetrace'] = 1
+                elif i in troughs_idx:
+                    recent_peaks = peaks_idx[peaks_idx < i]
+                    if len(recent_peaks) == 0:
+                        continue
+                    last_peak_idx = recent_peaks[-1]
+                    last_peak_value = df['close_smooth'].iloc[last_peak_idx]
+                    trough_value = df['close_smooth'].iloc[i]
+                    retracement_level = trough_value + 0.2 * (last_peak_value - trough_value)
+
+                    if df['close_smooth'].iloc[i:last_peak_idx].between(retracement_level, last_peak_value).any():
+                        df.loc[i:, 'signalRetrace'] = -1
+
+            plt.figure(1)
             plt.plot(df.index, df['close_smooth'].values, label='Smoothed Close Prices', color='black')
 
             # Plotting the peaks and troughs
@@ -155,6 +187,25 @@ def primary_features(df, params, live=False):
             plt.xlabel('Index')
             plt.ylabel('Close Price')
             plt.title('Smoothed Close Prices with Peaks and Troughs')
+            plt.legend()
+            plt.show()
+
+            plt.figure(2)
+            plt.plot(df.index, df['close_smooth'].values, label='Smoothed Close Prices', color='black')
+
+            aligned_buy_signals = df[(df['signalRetrace'] == 1)].index
+            aligned_sell_signals = df[(df['signalRetrace'] == -1)].index
+
+            print(df.signalRetrace.value_counts())
+
+            plt.scatter(aligned_buy_signals, df['close_smooth'][aligned_buy_signals], color='c', label='Aligned Buy',
+                        s=80, marker='^')
+            plt.scatter(aligned_sell_signals, df['close_smooth'][aligned_sell_signals], color='m', label='Aligned Sell',
+                        s=80, marker='v')
+
+            plt.xlabel('Index')
+            plt.ylabel('Close Price')
+            plt.title('Aligned Signals for ZigZag and Retracement')
             plt.legend()
             plt.show()
 
@@ -189,6 +240,74 @@ def primary_features(df, params, live=False):
         df.index = df['timestamp']
         params['features'] = []
 
+        #
+        #
+        # def fvg(high, low, close, min_gap=None, **kwargs):
+        #     """Indicator: FVG"""
+        #     # Validate Arguments
+        #     min_gap = int(min_gap) if min_gap and min_gap > 0 else 1
+        #
+        #     high = verify_series(high)
+        #     low = verify_series(low)
+        #     close = verify_series(close)
+        #     print(high, low, close)
+        #
+        #     if high is None or low is None or close is None:
+        #         print('NONE')
+        #         return
+        #
+        #     min_gap_pct = min_gap / 1000
+        #     min_gap_dol = min_gap_pct * close
+        #
+        #     fvg_bull = (low - high.shift(2))
+        #     fvg_bull_result = ((fvg_bull / close) * 100)
+        #
+        #     fvg_bear = (low.shift(2) - high)
+        #     fvg_bear_result = ((fvg_bear / close) * -100)
+        #
+        #     fvg_bull_array = np.where(fvg_bull > min_gap_dol, fvg_bull_result, np.NaN)
+        #     fvg_bull_series = pd.Series(fvg_bull_array)
+        #     fvg_bull_series.index = high.index
+        #
+        #     fvg_bear_array = np.where(fvg_bear > min_gap_dol, fvg_bear_result, np.NaN)
+        #     fvg_bear_series = pd.Series(fvg_bear_array)
+        #     fvg_bear_series.index = high.index
+        #     fvg = fvg_bull_series.fillna(fvg_bear_series)
+        #
+        #     return fvg
+        #
+        # def fvg_method(self, **kwargs):
+        #     high = self[kwargs.pop("high", "high")]
+        #     low = self[kwargs.pop("low", "low")]
+        #     close = self[kwargs.pop("close", "close")]
+        #     result = fvg(high=high, low=low, close=close, **kwargs)
+        #     return result
+        #
+        # pd.DataFrame.fvg = fvg_method
+        # df['FVG'] = df.fvg(high="high", low="low", close="close", min_gap=1)
+        # df['FVG'].fillna(0, inplace=True)
+        # print(df)
+        #
+        # apds = [mpf.make_addplot(df['FVG'], panel=1, color='b')]
+        #
+        # mpf.plot(df,
+        #          type='candle',
+        #          style='charles',
+        #          title='Candlestick Chart with FVG',
+        #          ylabel='Price',
+        #          ylabel_lower='FVG',
+        #          addplot=apds,
+        #          volume=False)
+        #
+        #
+        #
+        #
+        #
+        # pd.set_option('display.max_columns', None)
+        #
+        # df = add_all_ta_features(df, open="open", high="high", low="low", close="close", volume="Volume")
+        # print(df)
+
         df.reset_index(drop=True, inplace=True)
         df = technical_features(df, params)
         df = fundamental_features(df, params)
@@ -205,3 +324,5 @@ def primary_features(df, params, live=False):
         # print(len(df[df['side'] == -1]))
         df.index = df['timestamp']
     return df
+
+

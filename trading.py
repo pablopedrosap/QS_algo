@@ -1,5 +1,5 @@
 import json
-
+import requests
 from IPython.display import display, clear_output
 import pandas as pd
 from ib_insync import *
@@ -7,7 +7,7 @@ import primary_model
 import data_preparation
 import redis
 
-redis_conn = redis.StrictRedis(host='localhost', port=6379, db=0)
+# redis_conn = redis.StrictRedis(host='localhost', port=6379, db=0)
 
 
 def paper(model, params):
@@ -32,7 +32,7 @@ def paper(model, params):
             'status': 'new_order',
             'data': bracket_order
         }
-        redis_conn.publish('trade_updates', json.dumps(update_data))
+        # redis_conn.publish('trade_updates', json.dumps(update_data))
 
     def on_new_bar(data, has_new_bar: bool):
         if has_new_bar:
@@ -60,8 +60,8 @@ def paper(model, params):
     data = ib.reqHistoricalData(
         contract,
         endDateTime='',
-        durationStr='1 D',
-        barSizeSetting='1 min',
+        durationStr='3 D',
+        barSizeSetting='5 mins',
         whatToShow='MIDPOINT',
         useRTH=True,
         keepUpToDate=True,
@@ -71,59 +71,28 @@ def paper(model, params):
     ib.run()
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# from forexconnect import ForexConnect, fxcorepy
+# CONSUMER_KEY = 'DICIEMBRE'
+# SECRET_TOKEN = 'twxfwJQKa8futHCwcE1EPVNb9RGaMPv/LZcVH8dFOzy3p3l3djOJdE72mRFWktugDH29UbOmG7ceO5kRqmONYj/3Pm0SzqkYbAM9O/GafOyA4DEnomrnyPg0WYG/Bzee7JWc5cNTZzV5lepVnHLcsMlLNc/4AGBjCyUc49aDLAEc0dSdW+5q38gg+m00PTJWLWWYUr7v50XuEpW6zvoiTB6awLi0FU4p3+o3SThwdoQJ2sjNgDnjBKkG4IZ+Gl6MKiR1Ctz6Ho52JeCAevTaZsoIqt+UZtJRdIaO2lifwk0iRQMPmb6L8bALSsnq1D8uB+r/bESN1D2Yjv0NPSUm+A=='
+# ACCESS_TOKEN = '6810df8b5b06b041ffea'
+#
+# import requests
+# import time
+# import uuid
 #
 #
-# def session_status_changed(session: fxcorepy.O2GSession, status: fxcorepy.AO2GSessionStatus.O2GSessionStatus):
-#     print("Trading session status: " + str(status))
+# YOUR_SIGNATURE = 'Pablo Pedrosa'
+# headers1 = {
+#     "Authorization": f"OAuth realm='limited_poa', 'OAuth oauth_consumer_key='DICIEMBRE', oauth_signature_method='HMAC-SHA1', oauth_signature='{YOUR_SIGNATURE}', oauth_timestamp='{int(time.time())}', oauth_nonce='{uuid.uuid4().hex}'"
+# }
 #
+# response1 = requests.post("IB_REQUEST_TOKEN_URL", headers=headers1)
 #
-# with ForexConnect() as fx:
-#     try:
-#         fx.login("D261370901", "Zx6pu", "www.fxcorporate.com/Hosts.jsp", 'Demo', "connection", session_status_callback=session_status_changed)
+# headers3 = {
+#     "Authorization": f'OAuth oauth_consumer_key="{CONSUMER_KEY}", oauth_token="{UNAUTHORIZED_REQUEST_TOKEN}", oauth_signature_method="HMAC-SHA1", oauth_signature="{YOUR_SIGNATURE}", oauth_timestamp="{int(time.time())}", oauth_nonce="{uuid.uuid4().hex}"'
+# }
 #
-#         # Retrieve the account ID
-#         accounts_table = fx.get_table(ForexConnect.ACCOUNTS)
-#         account_id = accounts_table.get_row(0, "AccountID").value
-#
-#         # Retrieve the offer ID for EUR/USD
-#         offers_table = fx.get_table(ForexConnect.OFFERS)
-#         print(offers_table)
-#         for i in range(offers_table.rows_count):
-#             if offers_table.row(i, "Instrument").value == "EUR/USD":
-#                 offer_id = offers_table.row(i, "OfferID").value
-#                 break
-#
-#         # Additional code for creating and submitting the order here.
-#
-#     except Exception as e:
-#         print("Exception: " + str(e))
-#
-#     try:
-#         fx.logout()
-#     except Exception as e:
-#         print("Exception: " + str(e))
-#
+# response3 = requests.post("IB_ACCESS_TOKEN_URL", headers=headers3)
+
+
+
 

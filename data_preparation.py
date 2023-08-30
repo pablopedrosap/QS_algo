@@ -1,4 +1,5 @@
 from concurrent.futures import ProcessPoolExecutor
+from datetime import time, timedelta
 from random import gauss
 import numpy as np
 import pandas as pd
@@ -7,6 +8,12 @@ from scipy.optimize import minimize
 from statsmodels.tsa.stattools import adfuller
 import multiprocessing as mp
 from tqdm import tqdm
+from arch import arch_model
+import scipy.stats as stats
+from hurst import compute_Hc
+import nolds
+from scipy.stats import jarque_bera
+from statsmodels.tsa.stattools import adfuller
 
 
 def mpPandasObj(func, pdObj, numThreads, **kwargs):
@@ -26,11 +33,10 @@ def mpPandasObj(func, pdObj, numThreads, **kwargs):
 
 
 def csv(file, tf):
-    df = pd.read_csv(file)[50000:60000]
+    df = pd.read_csv(file)[:50000]
     df.rename(columns={'Timestamp': 'timestamp', 'Open': 'open', 'Close': 'close', 'High': 'high', 'Low': 'low'}, inplace=True)
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df = df.drop_duplicates(subset=['timestamp'])
-    # df.set_index('timestamp', inplace=True)
 
     mask = ~((df['timestamp'].dt.dayofweek == 5) | (
             (df['timestamp'].dt.dayofweek == 6) & (df['timestamp'].dt.hour < 17)) | (
@@ -39,13 +45,17 @@ def csv(file, tf):
     df = df[mask]
     if tf != 'm1':
         df.set_index('timestamp', inplace=True)  #possible error
-        df = df.resample('15T').agg({'open': 'first',  #15T
+        df = df.resample('5T').agg({'open': 'first',  #15T
                                      'high': 'max',
                                      'low': 'min',
                                      'close': 'last',
                                      'Volume': 'sum'})
         df.fillna(method='ffill', inplace=True)
-    df.reset_index(drop=True, inplace=True)
+
+    cols_to_check = ['open', 'high', 'low', 'close']
+    duplicate_mask = (df[cols_to_check] == df[cols_to_check].shift()).all(axis=1)
+    df = df[~duplicate_mask]
+    df.reset_index(inplace=True)
 
     return df
 
@@ -174,6 +184,8 @@ def apply_cusum_filter(df, threshold_std=1):
     t_events = []
     s_pos = 0
     s_neg = 0
+
+    df.reset_index(inplace=True)
     df['return'].dropna(inplace=True)
     diff = df['return'].diff()
     timestamp = df['timestamp']
@@ -193,11 +205,12 @@ def apply_cusum_filter(df, threshold_std=1):
     return pd.to_datetime(t_events)
 
 
-def cusum(df):
+def cusum(df, events):
     df['return'] = df['close'].pct_change()
     volatility = df['return'].std()
     t_events = apply_cusum_filter(df, threshold_std=volatility)
-    return t_events
+    df.index = df.timestamp
+    return df.loc[df.index.isin(t_events)], events.loc[events.index.isin(t_events)]
 
 
 def getDailyVol(close, span0=100):
@@ -220,12 +233,17 @@ def add_vertical_barrier(t_events, close, num_days=1):
 def apply_pt_sl_on_t1(close, events, ptSl, molecule):
     events_ = events.loc[molecule]
     out = events_[['t1']].copy(deep=True)
+
+    print(close)
+    print(events_['trgt'])
     if ptSl[0] > 0:
         pt = ptSl[0] * events_['trgt']
+        print(pt)
     else:
         pt = pd.Series(index=events.index)
     if ptSl[1] > 0:
         sl = -ptSl[1] * events_['trgt']
+        print(sl)
     else:
         sl = pd.Series(index=events.index)
     for loc, t1 in events_['t1'].items():
@@ -233,6 +251,7 @@ def apply_pt_sl_on_t1(close, events, ptSl, molecule):
         df0 = (df0 / close[loc] - 1) * events_.at[loc, 'side']
         out.loc[loc, 'sl'] = df0[df0 < sl[loc]].index.min()
         out.loc[loc, 'pt'] = df0[df0 > pt[loc]].index.min()
+    print(out)
     return out
 
 
@@ -267,12 +286,15 @@ def getEvents(close, t_events, ptSl, trgt, minRet, numThreads, t1=False, side=No
     return events
 
 
-def add_barriers(df, t_events):
+def add_barriers(df):
+    t_events = df.index
     df.set_index('timestamp', inplace=True)
     df = df.sort_values(by='timestamp')
     trgt = getDailyVol(df['close'])
     t1 = add_vertical_barrier(t_events, df['close'], num_days=1)
     events = getEvents(df['close'], t_events, ptSl=[3, 1], trgt=trgt, minRet=0, numThreads=10, t1=t1, side=df['side'])
+
+    df = df.loc[df.index.isin(t_events)]
 
     return df, events
 
@@ -281,7 +303,6 @@ def add_barriers(df, t_events):
 
 
 def getIndMatrix(t1):
-
     barIx = sorted(set(pd.to_datetime(t1.index)) | set(pd.to_datetime(t1.values)))
     indM = pd.DataFrame(0, index=barIx, columns=range(t1.shape[0]))
     for i, (t0, t1) in tqdm(enumerate(t1.items())):
@@ -350,6 +371,7 @@ def get_bins(events, close):
     out['ret'] = px.loc[events_['t1'].values].values / px.loc[events_.index] - 1
     out['w'] = events['w']
     out['trgt'] = events['trgt']
+    out['t1'] = events['t1']
     if 'side' in events_:
         out['ret'] *= events_['side']
         out['bin'] = np.sign(out['ret'])
@@ -367,13 +389,139 @@ def drop_labels(events, minPtc=.05):
 
 
 def secondary_features(df, params):
-    def secret_features(df):
-        params['secret_features'] = []
-        df['log_ret'] = np.log(df['close'] / df['close'].shift(1))
-        df['volatility'] = df['log_ret'].rolling(window=21).std() * np.sqrt(21)
-        df['autocorr_1'] = df['log_ret'].rolling(window=21).apply(lambda x: x.autocorr(lag=1), raw=False)
-        params['secret_features'] += ['volatility', 'autocorr_1']
+    def time_based_features(df):
+        df['time_of_day'] = df.index.hour * 3600 + df.index.minute * 60 + df.index.second
+        df['day_of_week'] = df.index.dayofweek
+        df['day_of_month'] = df.index.day
+        df['week_of_year'] = df.index.isocalendar().week
+
+        sessions = {
+            'sydney_open': time(17, 0),
+            'sydney_close': time(2, 0),
+            'tokyo_open': time(19, 0),
+            'tokyo_close': time(4, 0),
+            'london_open': time(3, 0),
+            'london_close': time(12, 0),
+            'new_york_open': time(8, 0),
+            'new_york_close': time(17, 0),
+        }
+
+        for session, session_time in sessions.items():
+            diff = df.index - pd.to_datetime(df.index.date) - pd.Timedelta(hours=session_time.hour,
+                                                                           minutes=session_time.minute)
+            mask = diff < timedelta(0)
+            diff_values = diff.values
+            diff_values[mask] += np.timedelta64(1, 'D')
+            df[f'minutes_to_{session}'] = pd.Series(diff_values, index=df.index).dt.total_seconds() / 60.0
+            params['secret_features'] += [f'minutes_to_{session}']
+        params['secret_features'] += ['time_of_day', 'day_of_week', 'day_of_month', 'week_of_year']
+
         return df
 
-    df = secret_features(df)
+    def market_based_features(df, other_pairs_df, commodities_df):
+        try:
+            # Correlation with Other Pairs
+            for col in other_pairs_df.columns:
+                df[f'corr_with_{col}'] = df['close'].rolling(window=21).corr(other_pairs_df[col])
+                params['secret_features'] += [f'corr_with_{col}']
+
+            # Correlation with Commodities (Gold, Oil)
+            for col in commodities_df.columns:
+                df[f'corr_with_{col}'] = df['close'].rolling(window=21).corr(commodities_df[col])
+                params['secret_features'] += [f'corr_with_{col}']
+
+            # Variance and Covariance with Other Pairs
+            for col in other_pairs_df.columns:
+                df[f'var_with_{col}'] = df['close'].rolling(window=21).var()
+                df[f'cov_with_{col}'] = df['close'].rolling(window=21).cov(other_pairs_df[col])
+                params['secret_features'] += [f'var_with_{col}', f'cov_with_{col}']
+        except:
+            pass
+
+        df['log_ret'] = np.log(df['close'] / df['close'].shift(1))
+        df['scaled_log_ret'] = df['log_ret'] * 1e4
+        model_arc = arch_model(df['scaled_log_ret'].dropna(), vol='GARCH', p=1, q=1)
+        res = model_arc.fit(update_freq=0, disp='off')
+        df['conditional_volatility'] = res.conditional_volatility
+        params['secret_features'] += ['conditional_volatility']
+
+        return df
+
+    def derived_features(df):
+        N = 21
+
+        df[f'prev_{N}_high'] = df['high'].rolling(window=N).max().shift(-N)
+        df[f'prev_{N}_low'] = df['low'].rolling(window=N).min().shift(-N)
+
+        df['up_ticks'] = df['close'].diff().apply(lambda x: 1 if x > 0 else 0).rolling(window=N).sum()
+        df['down_ticks'] = df['close'].diff().apply(lambda x: 1 if x < 0 else 0).rolling(window=N).sum()
+
+        rolling_metrics = ['min', 'max', 'mean', 'median', 'std', 'skew', 'kurt']
+        for metric in rolling_metrics:
+            df[f'rolling_{metric}'] = df['close'].rolling(window=N).agg(metric)
+            params['secret_features'] += [f'rolling_{metric}']
+
+        for lag in [1, 5, 10]:
+            df[f'lagged_{lag}'] = df['close'].shift(lag)
+            params['secret_features'] += [f'lagged_{lag}']
+
+        H, _, _ = compute_Hc(df['close'].dropna(), kind='price', simplified=True)
+        df['hurst_exponent'] = H
+        # df['fractal_dimension'] = nolds.dfa(df['close'].dropna())
+        # df['lyapunov_exponent'] = nolds.lyap_r(df['close'].dropna())
+        # df['largest_lyapunov_exponent'] = nolds.lyap_e(df['close'].dropna())[0]
+        # df['historical_volatility'] = df['close'].pct_change().rolling(window=N).std() * np.sqrt(N)
+        # params['secret_features'] += ['historical_volatility', 'largest_lyapunov_exponent', 'lyapunov_exponent', 'lyapunov_exponent',
+        #                               'fractal_dimension', 'hurst_exponent', f'prev_{N}_high', f'prev_{N}_low', 'up_ticks', 'down_ticks']
+
+        return df
+
+    def sentiment_features(df, news_df, social_media_df, retail_df):
+        return df
+
+    def advanced_statistical_features(df):
+        N = 100
+        df['kurtosis_price_changes'] = df['close'].rolling(window=N).apply(lambda x: x.diff().kurtosis(), raw=False)
+        df['skewness_price_changes'] = df['close'].rolling(window=N).apply(lambda x: x.diff().skew(), raw=False)
+        df['jarque_bera_pvalue'] = df['close'].rolling(window=N).apply(lambda x: jarque_bera(x.diff().dropna())[1],
+                                                                       raw=False)
+        # df['adf_statistic'] = df['close'].rolling(window=N).apply(lambda x: adfuller(x.diff().dropna())[0], raw=False)
+        # df['adf_pvalue'] = df['close'].rolling(window=N).apply(lambda x: adfuller(x.diff().dropna())[1], raw=False)
+        params['secret_features'] += ['kurtosis_price_changes', 'skewness_price_changes', 'jarque_bera_pvalue',
+                                      ]
+
+        return df
+
+    def market_microstructure_features(df):
+        # add bid and ask prices.
+        N = 100
+        if 'bid' in df.columns and 'ask' in df.columns:
+            df['mid_price'] = (df['bid'] + df['ask']) / 2
+            df['effective_spread'] = 2 * np.abs(df['close'] - df['mid_price'])
+
+        else:
+            df['mid_price_est'] = df['close'].rolling(window=2).mean()
+            df['effective_spread'] = 2 * np.abs(df['close'] - df['mid_price_est'])
+
+        df['price_diff'] = df['close'].diff()
+        rolling_window = df['price_diff'].rolling(window=N)
+        shifted_rolling_window = df['price_diff'].shift(1).rolling(window=N)
+
+        covariance = rolling_window.cov(shifted_rolling_window.apply(lambda x: x[-1] if not pd.isna(x[-1]) else np.nan))
+        df['roll_measure'] = 2 * np.sqrt(-covariance)
+        params['secret_features'] += ['effective_spread', 'roll_measure']
+        return df
+
+    def economic_events_features(df):
+        return df
+
+    params['secret_features'] = []
+    df = time_based_features(df)
+    df = market_based_features(df, other_pairs_df='', commodities_df='')
+    df = derived_features(df)
+    # df = sentiment_features(df, news_df, social_media_df, retail_df)
+    df = advanced_statistical_features(df)
+    df = market_microstructure_features(df)
+    df = economic_events_features(df)
+
     return df

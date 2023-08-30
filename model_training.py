@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import BaggingClassifier, RandomForestClassifier
-from sklearn.metrics import log_loss
+from sklearn.metrics import log_loss, confusion_matrix, make_scorer
 from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
 from sklearn.model_selection._split import _BaseKFold
 from sklearn.pipeline import Pipeline
@@ -9,6 +9,10 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 from tqdm import tqdm
 import pickle
+import logging
+
+
+logging.basicConfig(level=logging.INFO)
 
 
 class MyPipeline(Pipeline):
@@ -44,8 +48,18 @@ class PurgedKFold(_BaseKFold):
 '''OPTUNA FOR DEEP LEARNING'''
 
 
+def custom_eval_metric(y_true, y_pred):
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+    score = 3 * tp - fp - 3 * fn + 0 * tn
+    return score
+
+
+custom_scorer = make_scorer(custom_eval_metric)
+
+
 def clfHyperFit(feat, lbl, t1, pipe_clf, param_grid, cv=3, bagging=[0, None, 1.], rndSearchIter=0, n_jobs=-1, pctEmbargo=0,
                 **fit_params):
+
     if set(lbl.values) == {0, 1}:
         scoring = 'f1'
     else:
@@ -59,22 +73,33 @@ def clfHyperFit(feat, lbl, t1, pipe_clf, param_grid, cv=3, bagging=[0, None, 1.]
         gs = RandomizedSearchCV(estimator=pipe_clf, param_distributions=param_grid, scoring=scoring, cv=inner_cv,
                                 n_jobs=n_jobs, n_iter=rndSearchIter)
     gs = gs.fit(feat, lbl, **fit_params).best_estimator_
+
     if bagging[1] > 0:
         gs = BaggingClassifier(estimator=MyPipeline(gs.steps), n_estimators=int(bagging[0]),
                                max_samples=float(bagging[1]), max_features=float(bagging[2]), n_jobs=n_jobs)
-        gs = gs.fit(feat, lbl)
-        # gs = gs.fit(feat, lbl, sample_weight=fit_params[gs.base_estimator.steps[-1][0] + '__sample_weight'])
-        gs = Pipeline([('bag', gs)])
+        gs = gs.fit(feat, lbl, sample_weight=fit_params['sample_weight'])
+        gs = MyPipeline([('bag', gs)])
     return gs
 
 
-def cvScore(clf, X, y, cv=None, cvGen=None, sample_weight=None, t1=None, pctEmbargo=None, scoring='neg_log_loss'):
+def cvScore(clf, X, y, sample_weight, cv=None, cvGen=None, t1=None, pctEmbargo=None, scoring='neg_log_loss'):
     if cvGen is None:
         cvGen = PurgedKFold(n_splits=cv, t1=t1, pctEmbargo=pctEmbargo)
+    print(clf)
+    print(X)
+    print(X.columns)
+    print(y)
+    print(y.value_counts())
+
     score = []
     score_ = []
     for train, test in tqdm(cvGen.split(X=X)):
         fit = clf.fit(X=X.iloc[train, :], y=y.iloc[train], sample_weight=sample_weight.iloc[train].values)
+
+        y_pred = fit.predict(X.iloc[test, :])
+        conf_matrix = confusion_matrix(y.iloc[test], y_pred)
+        print("Confusion Matrix:")
+        print(conf_matrix)
         if scoring == 'neg_log_loss':
             prob = fit.predict_proba(X.iloc[test, :])
             score_ = -log_loss(y.iloc[test], prob, sample_weight=sample_weight.iloc[test].values, labels=clf.classes_)
@@ -86,7 +111,7 @@ def getRealData(real_data, features):
     real_data = real_data.dropna().copy()
     trnsX = real_data[features]
     cont = real_data[['bin']].copy()
-    # cont['w'] = 1. / cont.shape[0]
+    cont['w'] = real_data[['w']]
     cont['t1'] = pd.Series(cont.index, index=cont.index) #this is wrong
     return trnsX, cont
 
@@ -95,20 +120,20 @@ def testFunc(df, params, n_estimators=100, cv=10, tuning=True):
     trnsX, cont = getRealData(df, params['features'] + params['secret_features'])
 
     if params['ml_model'] == 'random_forest':
-        pipe_clf = Pipeline([
+        pipe_clf = MyPipeline([
             ('scl', StandardScaler()),
             ('clf', RandomForestClassifier(n_estimators=100))
         ])
-    param_grid = {'clf__n_estimators': [10, 100, 500], 'clf__max_depth': [None, 20, 30, 50]}
-    best_model = clfHyperFit(trnsX, cont['bin'], cont['t1'], pipe_clf, param_grid, rndSearchIter=10, cv=cv,
-                             bagging=[n_estimators, 1., 1.], n_jobs=-1, pctEmbargo=0)
+    param_grid = {'clf__n_estimators': [10, 50, 100, 200, 500], 'clf__max_depth': [None, 20, 30, 50]}
+    best_model = clfHyperFit(trnsX, cont['bin'], cont['t1'], pipe_clf, param_grid, rndSearchIter=20, cv=cv,
+                             bagging=[n_estimators, 1., 1.], n_jobs=-1, pctEmbargo=0, sample_weight=cont['w'])
 
 
     # method = 'MDI'
     # imp = featImpMDI(best_model, featNames=trnsX.columns) if method == 'MDI' else None
-    # oos = cvScore(best_model, X=trnsX, y=cont['successful'], cv=cv, t1=cont['t1'],
-    #                 pctEmbargo=0, scoring='neg_log_loss').mean()
-    # print(oos)
+    oos = cvScore(best_model, X=trnsX, y=cont['bin'], sample_weight=cont['w'], cv=cv, t1=cont['t1'],
+                    pctEmbargo=0, scoring='neg_log_loss').mean()
+    print(oos)
     # predictions = best_model.predict(trnsX)
     # actuals = cont['bin']
     # sharpe_ratio = sharpeRatio(predictions, actuals)

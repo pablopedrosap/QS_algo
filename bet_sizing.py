@@ -4,75 +4,92 @@ from scipy.stats import norm
 from sklearn.mixture import GaussianMixture
 
 
-def betSize(p, N):
-    print(p)
-    if isinstance(p, (list, np.ndarray)):
-        p = pd.Series(p[:, 1])
-    z = (p - 1 / N) / np.sqrt(p * (1 - p))
-    bet = 2 * norm.cdf(z) - 1
-    return bet
+def discreteSignal(signal0, stepSize):
+    signal1 = (signal0 / stepSize).round() * stepSize
+    signal1[signal1 > 1] = 1
+    signal1[signal1 < -1] = -1
+    return signal1
 
 
-def calculate_bet_sizes(probs, t1):
-    bet_sizes = betSize(probs, N=2)
-    print(bet_sizes)
+def mpAvgActiveSignals(signals, molecule):
+    out = pd.Series()
+    for loc in molecule:
+        df0 = (signals.index.values <= loc) & ((loc < signals['t1']) | pd.isnull(signals['t1']))
+        act = signals[df0].index
+        if len(act) > 0:
+            out[loc] = signals.loc[act, 'signal'].mean()
+        else:
+            out[loc] = 0
+    return out
 
-    df = pd.DataFrame({
-        'signal': bet_sizes,
-        't1': t1
-    })
 
-    df_long = df[df['signal'] > 0]
-    df_short = df[df['signal'] < 0]
+def avgActiveSignal(signals, numThreads):
+    tPnts = set(signals['t1'].dropna().values)
+    tPnts = tPnts.union(signals.index.values)
+    tPnts = list(tPnts)
+    tPnts.sort()
+    out = mpAvgActiveSignals(signals=signals, molecule=tPnts)
+    return out
 
-    if df_long.empty:
-        date_range_long = None
-    else:
-        active_periods_long = df_long['t1'].reset_index()
-        active_periods_long.columns = ['start', 'end']
-        date_range_long = pd.date_range(start=active_periods_long['start'].min(), end=active_periods_long['end'].max())
-    if df_short.empty:
-        date_range_short = None
-    else:
-        active_periods_short = df_short['t1'].reset_index()
-        active_periods_short.columns = ['start', 'end']
-        date_range_short = pd.date_range(start=active_periods_short['start'].min(),
-                                         end=active_periods_short['end'].max())
 
-    long_bets = pd.DataFrame(index=date_range_long)
-    long_bets['num_long_bets'] = long_bets.index.to_series().apply(
-        lambda date: ((active_periods_long['start'] <= date) & (date <= active_periods_long['end'])).sum())
-    short_bets = pd.DataFrame(index=date_range_short)
-    short_bets['num_short_bets'] = short_bets.index.to_series().apply(
-        lambda date: ((active_periods_short['start'] <= date) & (date <= active_periods_short['end'])).sum())
-    long_bets = long_bets.reindex(short_bets.index, fill_value=0)
-    new_series = pd.Series(long_bets['num_long_bets'].values - short_bets['num_short_bets'].values)
-    data = new_series.values.reshape(-1, 1)
+def getSignal(events, stepSize, prob, pred, numClasses, numThreads, **kargs):
+    pred = 1
+    if prob.shape[0] == 0:
+        return pd.Series()
+    signal0 = (prob - 1. / numClasses) / (prob * (1. - prob)) ** .5
+    signal0 = pd.Series(pred * (2 * norm.cdf(signal0) - 1), index=prob.index)
+    signal0.index = prob.index
+    if 'side' in events:
+        signal0 *= events.loc[signal0.index, 'side']
+    df0 = signal0.to_frame('signal').join(events[['t1']], how='left')
+    df0 = avgActiveSignal(df0, numThreads)
 
-    if len(data) > 1:
-        gmm = GaussianMixture(n_components=2)
-        gmm.fit(data)
+    print(signal0[1100:1150])
+    print(df0[1100:1150])
+    signal1 = discreteSignal(signal0=df0, stepSize=stepSize)
+    print(signal1[1100:1150])
+    print(signal1.value_counts())
+    return signal1
 
-        def gmm_cdf(x, gmm):
-            cdf = 0
-            for i in range(gmm.n_components):
-                weight = gmm.weights_[i]
-                mean = gmm.means_[i, 0]
-                cov = gmm.covariances_[i, 0]
-                cdf += weight * norm(loc=mean, scale=np.sqrt(cov)).cdf(x)
-            return cdf
 
-        F_0 = gmm_cdf(0, gmm)
-        bet_sizes = pd.Series(index=new_series.index)
-        for i, x in new_series.items():
-            F_x = gmm_cdf(x, gmm)
-            if x >= 0:
-                bet_sizes[i] = (F_x - F_0) / (1 - F_0)
-            else:
-                bet_sizes[i] = (F_x - F_0) / F_0
-    else:
-        # Skip this iteration and proceed to the next one, or
-        # return a default bet size
-        bet_sizes = pd.Series([0.5], index=new_series.index)
-    return bet_sizes
+
+
+
+
+
+def betSize(w, x):
+    return x * (w+x**2)**-.5
+
+
+def getTPos(w, f, mP, maxPos):
+    return int(betSize(w, f-mP)*maxPos)
+
+
+def invPrice(f, w, m):
+    return f-m*(w/(1-m**2))**.5
+
+
+def limitPrice(tPos, pos, f, w, maxPos):
+    sgn = 1 if tPos >= pos else -1
+    lP = 0
+    for j in range(abs(pos+sgn), abs(tPos+1)):
+        lP += invPrice(f, w, j/float(maxPos))
+    lP /= tPos - pos
+    return lP
+
+
+def getW(x, m):
+    return x**2*(m**-2-1)
+
+
+def position_size():
+    pos, maxPos, mP, f, wParams = 0, 100, 100, 175, {'divergence': 10, 'm': .95}
+    w = getW(wParams['divergence'], wParams['m'])
+    tPos = getTPos(w, f, mP, maxPos)
+    print(tPos)
+    lP = limitPrice(tPos, pos, f, w, maxPos)
+    return tPos
+
+
+
 
